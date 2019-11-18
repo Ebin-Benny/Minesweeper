@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-
 module Main where
 
 import qualified Data.Vector as V
@@ -28,40 +26,23 @@ width = 10
 height :: Int
 height = 10
 
-
-
-checkNeighbours :: Int -> Int -> [Int] -> Int
-checkNeighbours i j randomNumbers = length $ filter (\case
-                                                        (1, k) -> isNeighbour i j k
-                                                        _ -> False) indexedList
-                                    where indexedList = zip randomNumbers [0..]
-
-isNeighbour :: Int -> Int -> Int -> Bool
-isNeighbour i j k
-    | k == (i-1 * height + j-1)     = isValid i j
-    | k == (i-1 * height + j)       = isValid i j
-    | k == (i-1 * height + j+1)     = isValid i j
-    | k == (i * height + j-1)       = isValid i j
-    | k == (i * height + j+1)       = isValid i j
-    | k == (i+1 * height + j-1)     = isValid i j
-    | k == (i+1 * height + j)       = isValid i j
-    | k == (i+1 * height + j+1)     = isValid i j
-    | otherwise = False
-
-isValid :: Int -> Int -> Bool
-isValid i j = i >= 0 && i < height && j >= 0 && j < width
-
 random2DBoard :: StdGen -> Int -> Int -> V.Vector (V.Vector Bool)
-random2DBoard gen = V.generate height $ \_-> V.generate width $ \_ -> (randomNumbers !! (height * i + j)) == 1
-                where randomNumbers = randomRs (1,10) g :: [Int]
+random2DBoard gen height width = V.generate height $ \i-> V.generate width $ \j -> (randomNumbers !! (height * i + j)) == 1
+                where randomNumbers = randomRs (1,10) gen :: [Int]
 
 initialiseBoard :: StdGen -> Int -> Int -> Board
-initialiseBoard gen width height = Board $ V.generate height $
+initialiseBoard gen width height = Board ( V.generate height $
     \i -> V.generate width $
-        \j -> case randomNumbers !! (height * i + j) of
-            1 -> Square MINE 0 False (i,j)
-            _ -> Square EMPTY 0 False (i,j)
-    where randomBoard = random2DBoard gen
+        \j -> let squareType = if (randomBoard V.! i) V.! j then MINE else EMPTY in
+            Square squareType (numberOfMines randomBoard (i,j)) False (i,j) )
+    where randomBoard = random2DBoard gen width height
+
+numberOfMines :: V.Vector (V.Vector Bool) -> (Int,Int) -> Int
+numberOfMines board (i,j) = length $ filter (\(i,j) -> (board V.! i) V.! j) (filter isValidIndex neighbours)
+    where   neighbours = [(i-1,j-1),(i,j-1),(i+1,j-1),(i-1,j),(i+1,j),(i-1,j+1),(i,j+1),(i+1,j+1)] :: [(Int,Int)]
+
+isValidIndex :: (Int,Int) -> Bool
+isValidIndex (i,j) = i >= 0 && i < height && j >= 0 && j < width
 
 main :: IO ()
 main = do
