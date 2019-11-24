@@ -24,6 +24,7 @@ executable Minesweeper
   build-depends:        base >=4.6 && <4.13, 
                         vector >=0.10 && <0.13, 
                         random,
-                        threepenny-gui
+                        threepenny-gui,
+                        mtl
   -- hs-source-dirs:
   default-language:    Haskell2010
