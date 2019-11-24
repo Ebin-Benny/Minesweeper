@@ -1,12 +1,19 @@
+{-# Language ScopedTypeVariables #-}
 module Main where
 
 import qualified Data.Vector as V
 import System.Random
+import qualified Graphics.UI.Threepenny as UI
+import Graphics.UI.Threepenny.Core
+
+import Reactive.Threepenny
 
 type Position = (Int, Int)
 data SquareTypes = MINE | EMPTY
 data DisplayTypes = OPEN | CLOSED
 data GameStatus = PLAYING | GAMEOVER | WIN
+
+canvasSize = 400
 
 data BoardSquare = Square {  
     squareType :: SquareTypes, 
@@ -60,26 +67,100 @@ isValidIndex :: (Int,Int) -> Bool
 isValidIndex (i,j) = i >= 0 && i < height && j >= 0 && j < width
 
 openSquare :: Game -> (Int, Int) -> Game
-openSquare (Game game status) (i,j) = case (game V.! i) V.! j of
+openSquare (Game board status) (i,j) = case (board V.! i) V.! j of
     (Square squareType 0 marked (i,j) CLOSED) -> foldl openSquare (Game updatedBoard status) (neighbourIndices (i,j))
-        where updatedBoard = game V.// [(i,(game V.! i V.// [(j, (Square squareType 0 marked (i,j) OPEN))]))]
+        where updatedBoard = board V.// [(i,(board V.! i V.// [(j, (Square squareType 0 marked (i,j) OPEN))]))]
     (Square squareType neighbours marked (i,j) CLOSED) -> (Game updatedBoard status)
-        where updatedBoard = game V.// [(i,(game V.! i V.// [(j, (Square squareType neighbours marked (i,j) OPEN))]))]
-    (Square squareType neighbours marked (i,j) OPEN) -> Game game status
+        where updatedBoard = board V.// [(i,(board V.! i V.// [(j, (Square squareType neighbours marked (i,j) OPEN))]))]
+    (Square squareType neighbours marked (i,j) OPEN) -> Game board status
 
 markSquare :: Game -> (Int, Int) -> Game
-markSquare (Game game status) (i,j) = case (game V.! i) V.! j of
+markSquare (Game board status) (i,j) = case (board V.! i) V.! j of
     (Square squareType neighbours True (i,j) shown) -> (Game updatedBoard status)
-        where updatedBoard = game V.// [(i,(game V.! i V.// [(j, (Square squareType neighbours False (i,j) shown))]))]
+        where updatedBoard = board V.// [(i,(board V.! i V.// [(j, (Square squareType neighbours False (i,j) shown))]))]
     (Square squareType neighbours False (i,j) shown) -> (Game updatedBoard status)
-        where updatedBoard = game V.// [(i,(game V.! i V.// [(j, (Square squareType neighbours True (i,j) shown))]))]
+        where updatedBoard = board V.// [(i,(board V.! i V.// [(j, (Square squareType neighbours True (i,j) shown))]))]
 
-
+updateGameStatus :: Game -> Game
+updateGameStatus (Game board _) = Game board (foldl (foldRows) WIN board)
+    where foldRows gameStatus row = foldl (\oldStatus (Square _ _ marked _ _) -> case marked of
+                                            True    -> gameStatus
+                                            False   -> PLAYING
+                                            ) gameStatus row
 
 main :: IO ()
 main = do
     gen <- newStdGen
     let game = initialiseGame gen 10 10
-    let markedBoard = markSquare game (2,1)
-    let updatedBoard = openSquare markedBoard (3,4)
-    print updatedBoard
+    startGUI defaultConfig (setup game)
+
+setup :: Game -> Window -> UI ()
+setup game window = do
+    return window # set title "Minesweeper"
+
+    canvas <- UI.canvas
+        # set UI.height canvasSize
+        # set UI.width canvasSize
+        # set UI.style [("border", "solid black 1px"), ("background", "#000")]
+
+    drawBoard game canvas
+
+    getBody window #+
+        [element canvas]
+  
+    mousePos <- stepper (0,0) $ UI.mousemove canvas
+
+    let inputEvent :: Event (Game -> Game)
+        inputEvent = updateGame <$ UI.click canvas
+  
+    currentGame <- accumB game inputEvent
+
+    let bst :: Behavior (Game, (Int,Int))
+        bst = (,) <$> currentGame <*> mousePos
+  
+        eDraw :: Event (Game, (Int,Int))
+        eDraw = bst <@ UI.click canvas
+  
+    onEvent eDraw $ \(latestGame,_) -> do drawBoard latestGame canvas
+    return ()
+
+    
+
+updateGame :: Game -> Game
+updateGame game = openSquare game (1,1) 
+
+drawShape :: (Int,Int) -> Element -> UI ()
+drawShape (x,y) canvas = do
+    canvas # set' UI.fillStyle   (UI.htmlColor "white")
+    canvas # UI.fillRect (fromIntegral x,fromIntegral y) 1 1
+
+drawBoard :: Game -> Element -> UI ()
+drawBoard (Game board _) canvas = do 
+    board <- V.forM board (drawRow)
+    return ()
+    where drawRow row = V.forM row (\square -> drawBoardSquare square canvas)
+
+drawBoardSquare :: BoardSquare -> Element -> UI ()
+drawBoardSquare (Square squareType _ marked (i,j) CLOSED) canvas = do
+    canvas # set' UI.fillStyle   (UI.htmlColor "gray")
+    canvas # UI.fillRect (fromIntegral ((j*(canvasSize `div` width) + 3)),fromIntegral ((i*(canvasSize `div` height) + 3))) (fromIntegral(canvasSize `div` width - 6)) (fromIntegral(canvasSize `div` height - 6))
+
+drawBoardSquare (Square squareType 0 marked (i,j) OPEN) canvas = do
+    canvas # set' UI.fillStyle   (UI.htmlColor "white")
+    canvas # UI.fillRect (fromIntegral ((j*(canvasSize `div` width) + 3)),fromIntegral ((i*(canvasSize `div` height) + 3))) (fromIntegral(canvasSize `div` width - 6)) (fromIntegral(canvasSize `div` height - 6))
+
+drawBoardSquare (Square squareType neighbours marked (i,j) OPEN) canvas = do
+    canvas # set' UI.fillStyle   (UI.htmlColor "white")
+    canvas # UI.fillRect (fromIntegral ((j*(canvasSize `div` width) + 3)),fromIntegral ((i*(canvasSize `div` height) + 3))) (fromIntegral(canvasSize `div` width - 6)) (fromIntegral(canvasSize `div` height - 6))
+    canvas # set' UI.fillStyle   (UI.htmlColor "black")
+    canvas # set' UI.textAlign   (UI.Center)
+    canvas # set' UI.textFont    "24px sans-serif"
+    canvas # UI.fillText (show neighbours) (fromIntegral ((j*(canvasSize `div` width)) + ((canvasSize `div` width) `div` 2)), fromIntegral ((i*(canvasSize `div` height)) + ((canvasSize `div` height)-10)))
+    
+--main :: IO ()
+--main = do
+--    gen <- newStdGen
+--    let game = initialiseGame gen 10 10
+--    let markedBoard = markSquare game (2,1)
+--    let updatedBoard = openSquare markedBoard (3,4)
+--    print updatedBoard
