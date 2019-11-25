@@ -14,7 +14,16 @@ data DisplayTypes = OPEN | CLOSED
 data GameStatus = PLAYING | GAMEOVER | WIN
 data GameMode = MARKING | OPENING
 
-canvasSize = 400
+canvasSize = 800
+
+width :: Int
+width = 20
+
+height :: Int
+height = 20
+
+difficulty :: Int
+difficulty = 6
 
 data BoardSquare = Square {  
     squareType :: SquareTypes, 
@@ -40,15 +49,9 @@ data Game = Game {
 instance Show Game where
     show (Game board _) = show board
 
-width :: Int
-width = 10
-
-height :: Int
-height = 10
-
 random2DBoard :: StdGen -> V.Vector (V.Vector Bool)
 random2DBoard gen = V.generate height $ \i-> V.generate width $ \j -> (randomNumbers !! (height * i + j)) == 1
-                where randomNumbers = randomRs (1,8) gen :: [Int]
+                where randomNumbers = randomRs (1,difficulty) gen :: [Int]
 
 initialiseGame :: StdGen -> Game
 initialiseGame gen = Game ( V.generate height $
@@ -89,11 +92,71 @@ updatedGameStatus board = foldl (foldRows) WIN board
                                 \oldStatus (Square squareType _ marked _ shown) -> case (oldStatus, squareType, marked, shown) of
                                             (GAMEOVER,_,_,_)            -> GAMEOVER
                                             (_,MINE,_,OPEN)             -> GAMEOVER
-                                            (_,MINE,True,CLOSED)        -> oldStatus
-                                            (_,MINE,False,CLOSED)       -> PLAYING
+                                            (_,MINE,_,CLOSED)           -> oldStatus
                                             (_,EMPTY,_,CLOSED)          -> PLAYING
                                             (_,EMPTY,_,OPEN)            -> oldStatus
                                             ) gameStatus row
+
+--makeMove :: Game -> Game
+--makeMove (Game board PLAYING) = 
+
+--makeMove game@(Game _ _) = game
+
+makeMove :: Game -> Game
+makeMove (Game board status) = case openAllN board of
+                                    Just ij -> openSquare (Game board status) ij
+                                    Nothing -> case markAllN board of 
+                                        Just ij -> markSquare (Game board status) ij
+                                        Nothing -> (Game board status)
+makeMove game@(Game _ _) = game
+
+openAllN :: (V.Vector (V.Vector BoardSquare)) -> Maybe (Int, Int)                                    
+openAllN board = foldl (foldRows) Nothing board
+    where foldRows foundOpen row = foldl (
+                                \oldOpen (Square squareType _ marked (i,j) shown) -> case (oldOpen, openN (i,j) board) of
+                                            (Nothing, Nothing)          -> Nothing
+                                            (Nothing, Just (x,y))       -> Just (x,y)
+                                            (_)                         -> oldOpen
+                                            ) foundOpen row
+
+openN :: (Int, Int) -> (V.Vector (V.Vector BoardSquare)) -> Maybe (Int, Int)
+openN (i,j) board = case (board V.! i) V.! j of
+                        (Square _ neighbours _ _ OPEN)     ->   if markedCount == neighbours
+                                                                then unMarkedSquare 
+                                                                else Nothing
+                                                                where markedCount = foldl (\count (x,y) -> case (board V.! x) V.! y of
+                                                                        (Square _ _ True _ _) -> (count + 1) 
+                                                                        _                       -> count
+                                                                        ) 0 (neighbourIndices (i,j))
+                                                                      unMarkedSquare = foldl (\unmarked (x,y) -> case (board V.! x) V.! y of
+                                                                        (Square _ _ False _ CLOSED) -> Just (x,y) 
+                                                                        _                       -> unmarked
+                                                                        ) Nothing (neighbourIndices (i,j))
+                        _                                   -> Nothing
+
+markAllN :: (V.Vector (V.Vector BoardSquare)) -> Maybe (Int, Int)
+markAllN board = foldl (foldRows) Nothing board
+    where foldRows foundMark row = foldl (
+                                \oldMark (Square _ _ _ (i,j) _) -> case (oldMark, markN (i,j) board) of
+                                            (Nothing, Nothing)          -> Nothing
+                                            (Nothing, Just (x,y))       -> Just (x,y)
+                                            (_)                         -> oldMark
+                                            ) foundMark row
+
+markN :: (Int, Int) -> (V.Vector (V.Vector BoardSquare)) -> Maybe (Int, Int)
+markN (i,j) board = case (board V.! i) V.! j of
+                        (Square _ neighbours _ _ OPEN)     ->   if unOpenedCount == neighbours
+                                                                then unMarkedSquare 
+                                                                else Nothing
+                                                                where unOpenedCount = foldl (\count (x,y) -> case (board V.! x) V.! y of
+                                                                        (Square _ _ _ _ CLOSED) -> (count + 1) 
+                                                                        _                       -> count
+                                                                        ) 0 (neighbourIndices (i,j))
+                                                                      unMarkedSquare = foldl (\unmarked (x,y) -> case (board V.! x) V.! y of
+                                                                        (Square _ _ False _ CLOSED) -> Just (x,y) 
+                                                                        _                       -> unmarked
+                                                                        ) Nothing (neighbourIndices (i,j))
+                        _                                   -> Nothing
 
 main :: IO ()
 main = do
@@ -112,10 +175,11 @@ setup game window = do
 
     openMode <- UI.button #+ [string "Open"]
     markMode <- UI.button #+ [string "Mark"]
+    moveButton <- UI.button #+ [string "MakeMove"]
 
     drawBoard game canvas
 
-    getBody window #+ [column [element canvas], element openMode, element markMode]
+    getBody window #+ [column [element canvas], element openMode, element markMode, element moveButton]
     
     currentGame <- liftIO $ newIORef (game)
     currentMode <- liftIO $ newIORef OPENING
@@ -125,6 +189,12 @@ setup game window = do
 
     on UI.click markMode $ \_ ->
         do liftIO $ writeIORef currentMode MARKING
+    
+    on UI.click moveButton $ \_ -> do 
+        current <- liftIO $ readIORef currentGame
+        let latestGame = makeMove current
+        liftIO $ writeIORef currentGame latestGame
+        do drawBoard latestGame canvas
 
     on UI.mousedown canvas $ \(x,y) -> do
         mode <- liftIO $ readIORef currentMode
