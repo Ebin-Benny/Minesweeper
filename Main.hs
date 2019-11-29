@@ -12,18 +12,15 @@ type Position = (Int, Int)
 data SquareTypes = MINE | EMPTY
 data DisplayTypes = OPEN | CLOSED
 data GameStatus = PLAYING | GAMEOVER | WIN
-data GameMode = MARKING | OPENING
+data Mode = MARKING | OPENING
 
 canvasSize = 800
 
-width :: Int
-width = 20
-
-height :: Int
-height = 20
+size :: Int
+size = 20
 
 difficulty :: Int
-difficulty = 5
+difficulty = 2
 
 data BoardSquare = Square {
     squareType :: SquareTypes,
@@ -51,12 +48,12 @@ instance Show Game where
   show (Game board _) = show board
 
 random2DBoard :: [Int] -> V.Vector (V.Vector Bool)
-random2DBoard randomNumbers = V.generate height
-  $ \i -> V.generate width $ \j -> (randomNumbers !! (height * i + j)) == 1
+random2DBoard randomNumbers = V.generate size
+  $ \i -> V.generate size $ \j -> (randomNumbers !! (size * i + j)) <= difficulty
 
 initialiseGame :: [Int] -> Game
 initialiseGame randomNumbers = Game
-  (V.generate height $ \i -> V.generate width $ \j ->
+  (V.generate size $ \i -> V.generate size $ \j ->
     let squareType = if (randomBoard V.! i) V.! j then MINE else EMPTY
     in  Square squareType (numberOfMines randomBoard (i, j)) False (i, j) CLOSED
   )
@@ -80,9 +77,7 @@ neighbourIndices (i, j) = filter isValidIndex neighbours
     , (i    , j + 1)
     , (i + 1, j + 1)
     ] :: [(Int, Int)]
-
-isValidIndex :: (Int, Int) -> Bool
-isValidIndex (i, j) = i >= 0 && i < height && j >= 0 && j < width
+  isValidIndex (i, j) = i >= 0 && i < size && j >= 0 && j < size
 
 openSquare :: Game -> (Int, Int) -> Game
 openSquare (Game board status) (i, j) = case (board V.! i) V.! j of
@@ -160,22 +155,31 @@ updatedGameStatus board = foldl (foldRows) WIN board
     gameStatus
     row
 
-makeMove :: Game -> Game
-makeMove (Game board PLAYING) = case openAllN board of
-  Just ij -> openSquare (Game board PLAYING) ij
-  Nothing -> case markAllN board of
-    Just ij -> markSquare (Game board PLAYING) ij
-    Nothing -> (Game board PLAYING)
-makeMove game@(Game _ _) = game
+makeMove :: [Int] -> Game -> Game
+makeMove randomNumbers game@(Game _ PLAYING) = case nextMove randomNumbers game of
+  Just (MARKING, ij) -> markSquare game ij
+  Just (OPENING, ij) -> openSquare game ij
+  Nothing -> game
 
-openAllN :: (V.Vector (V.Vector BoardSquare)) -> Maybe (Int, Int)
+makeMove _ game@(Game _ _) = game
+
+nextMove :: [Int] -> Game -> Maybe (Mode, (Int, Int))
+nextMove randomNumbers (Game board _)  = openAllN board <|> markAllN board <|> randomMove randomNumbers board
+
+randomMove :: [Int] -> (V.Vector (V.Vector BoardSquare)) -> Maybe (Mode,(Int, Int))
+randomMove (x:y:xs) board = case (board V.! y) V.! x of
+                (Square _ _ _ _ CLOSED) -> Just (OPENING,(y,x))
+                (Square _ _ _ _ OPEN) -> randomMove xs board
+randomMove (x:xs) _ = Nothing
+
+openAllN :: (V.Vector (V.Vector BoardSquare)) -> Maybe (Mode,(Int, Int))
 openAllN board = foldl (foldRows) Nothing board
  where
   foldRows foundOpen row = foldl
     (\oldOpen (Square squareType _ marked (i, j) shown) ->
       case (oldOpen, openN (i, j) board) of
         (Nothing, Nothing    ) -> Nothing
-        (Nothing, Just (x, y)) -> Just (x, y)
+        (Nothing, Just (x, y)) -> Just (OPENING,(x, y))
         (_)                    -> oldOpen
     )
     foundOpen
@@ -203,13 +207,13 @@ openN (i, j) board = case (board V.! i) V.! j of
       (neighbourIndices (i, j))
   _ -> Nothing
 
-markAllN :: (V.Vector (V.Vector BoardSquare)) -> Maybe (Int, Int)
+markAllN :: (V.Vector (V.Vector BoardSquare)) -> Maybe (Mode,(Int, Int))
 markAllN board = foldl (foldRows) Nothing board
  where
   foldRows foundMark row = foldl
     (\oldMark (Square _ _ _ (i, j) _) -> case (oldMark, markN (i, j) board) of
       (Nothing, Nothing    ) -> Nothing
-      (Nothing, Just (x, y)) -> Just (x, y)
+      (Nothing, Just (x, y)) -> Just (MARKING,(x, y))
       (_)                    -> oldMark
     )
     foundMark
@@ -240,7 +244,7 @@ markN (i, j) board = case (board V.! i) V.! j of
 main :: IO ()
 main = do
   gen <- newStdGen
-  let randomNumbers = randomRs (1, difficulty) gen :: [Int]
+  let randomNumbers = randomRs (0, size-1) gen :: [Int]
   let game = initialiseGame randomNumbers
   startGUI defaultConfig (setup game randomNumbers)
 
@@ -248,7 +252,7 @@ setup :: Game-> [Int] -> Window -> UI ()
 setup game randomNumbers window = do
   return window # set title "Minesweeper"
 
-  canvas <- UI.canvas # set UI.height canvasSize # set UI.width canvasSize # set
+  canvas <- UI.canvas # set UI.width canvasSize # set UI.height canvasSize # set
     UI.style
     [("border", "solid black 1px"), ("background", "#000")]
 
@@ -279,7 +283,7 @@ setup game randomNumbers window = do
 
   on UI.click moveButton $ \_ -> do
     current <- liftIO $ readIORef currentGame
-    let latestGame = makeMove current
+    let latestGame = makeMove randomNumbers current
     liftIO $ writeIORef currentGame latestGame
     do
       drawBoard latestGame canvas
@@ -288,7 +292,7 @@ setup game randomNumbers window = do
     canvas # UI.clearCanvas
     current <- liftIO $ readIORef currentGame
     count <- liftIO $ readIORef currentCount
-    let latestGame = initialiseGame (drop (count * (width * height)) randomNumbers)
+    let latestGame = initialiseGame (drop (count * (size * size)) randomNumbers)
     liftIO $ writeIORef currentGame latestGame
     liftIO $ writeIORef currentCount (count+1)
     do
@@ -301,8 +305,8 @@ setup game randomNumbers window = do
         current <- liftIO $ readIORef currentGame
         let latestGame = openSquare
               current
-              ( (y `div` (canvasSize `div` height))
-              , (x `div` (canvasSize `div` width))
+              ( (y `div` (canvasSize `div` size))
+              , (x `div` (canvasSize `div` size))
               )
         liftIO $ writeIORef currentGame latestGame
         do
@@ -311,8 +315,8 @@ setup game randomNumbers window = do
         current <- liftIO $ readIORef currentGame
         let latestGame = markSquare
               current
-              ( (y `div` (canvasSize `div` height))
-              , (x `div` (canvasSize `div` width))
+              ( (y `div` (canvasSize `div` size))
+              , (x `div` (canvasSize `div` size))
               )
         liftIO $ writeIORef currentGame latestGame
         do
@@ -344,57 +348,57 @@ drawBoardSquare :: BoardSquare -> Element -> UI ()
 drawBoardSquare (Square squareType _ False (i, j) CLOSED) canvas = do
   canvas # set' UI.fillStyle (UI.htmlColor "gray")
   canvas # UI.fillRect
-    ( fromIntegral ((j * (canvasSize `div` width) + 3))
-    , fromIntegral ((i * (canvasSize `div` height) + 3))
+    ( fromIntegral ((j * (canvasSize `div` size) + 3))
+    , fromIntegral ((i * (canvasSize `div` size) + 3))
     )
-    (fromIntegral (canvasSize `div` width - 6))
-    (fromIntegral (canvasSize `div` height - 6))
+    (fromIntegral (canvasSize `div` size - 6))
+    (fromIntegral (canvasSize `div` size - 6))
 
 drawBoardSquare (Square _ _ True (i, j) _) canvas = do
   canvas # set' UI.fillStyle (UI.htmlColor "green")
   canvas # UI.fillRect
-    ( fromIntegral ((j * (canvasSize `div` width) + 3))
-    , fromIntegral ((i * (canvasSize `div` height) + 3))
+    ( fromIntegral ((j * (canvasSize `div` size) + 3))
+    , fromIntegral ((i * (canvasSize `div` size) + 3))
     )
-    (fromIntegral (canvasSize `div` width - 6))
-    (fromIntegral (canvasSize `div` height - 6))
+    (fromIntegral (canvasSize `div` size - 6))
+    (fromIntegral (canvasSize `div` size - 6))
   canvas # set' UI.fillStyle (UI.htmlColor "white")
   canvas # set' UI.textAlign (UI.Center)
   canvas # set' UI.textFont "32px sans-serif"
   canvas # UI.fillText
     ("*")
     ( fromIntegral
-      ((j * (canvasSize `div` width)) + ((canvasSize `div` width) `div` 2))
+      ((j * (canvasSize `div` size)) + ((canvasSize `div` size) `div` 2))
     , fromIntegral
-      ((i * (canvasSize `div` height)) + ((canvasSize `div` height) - 6))
+      ((i * (canvasSize `div` size)) + ((canvasSize `div` size) - 6))
     )
 
 drawBoardSquare (Square MINE _ False (i, j) OPEN) canvas = do
   canvas # set' UI.fillStyle (UI.htmlColor "red")
   canvas # UI.fillRect
-    ( fromIntegral ((j * (canvasSize `div` width) + 3))
-    , fromIntegral ((i * (canvasSize `div` height) + 3))
+    ( fromIntegral ((j * (canvasSize `div` size) + 3))
+    , fromIntegral ((i * (canvasSize `div` size) + 3))
     )
-    (fromIntegral (canvasSize `div` width - 6))
-    (fromIntegral (canvasSize `div` height - 6))
+    (fromIntegral (canvasSize `div` size - 6))
+    (fromIntegral (canvasSize `div` size - 6))
 
 drawBoardSquare (Square EMPTY 0 False (i, j) OPEN) canvas = do
   canvas # set' UI.fillStyle (UI.htmlColor "white")
   canvas # UI.fillRect
-    ( fromIntegral ((j * (canvasSize `div` width) + 3))
-    , fromIntegral ((i * (canvasSize `div` height) + 3))
+    ( fromIntegral ((j * (canvasSize `div` size) + 3))
+    , fromIntegral ((i * (canvasSize `div` size) + 3))
     )
-    (fromIntegral (canvasSize `div` width - 6))
-    (fromIntegral (canvasSize `div` height - 6))
+    (fromIntegral (canvasSize `div` size - 6))
+    (fromIntegral (canvasSize `div` size - 6))
 
 drawBoardSquare (Square EMPTY neighbours False (i, j) OPEN) canvas = do
   canvas # set' UI.fillStyle (UI.htmlColor "white")
   canvas # UI.fillRect
-    ( fromIntegral ((j * (canvasSize `div` width) + 3))
-    , fromIntegral ((i * (canvasSize `div` height) + 3))
+    ( fromIntegral ((j * (canvasSize `div` size) + 3))
+    , fromIntegral ((i * (canvasSize `div` size) + 3))
     )
-    (fromIntegral (canvasSize `div` width - 6))
-    (fromIntegral (canvasSize `div` height - 6))
+    (fromIntegral (canvasSize `div` size - 6))
+    (fromIntegral (canvasSize `div` size - 6))
   case neighbours of
     1          ->   canvas # set' UI.fillStyle (UI.htmlColor "#0000ff")
     2          ->   canvas # set' UI.fillStyle (UI.htmlColor "#008100")
@@ -410,7 +414,7 @@ drawBoardSquare (Square EMPTY neighbours False (i, j) OPEN) canvas = do
   canvas # UI.fillText
     (show neighbours)
     ( fromIntegral
-      ((j * (canvasSize `div` width)) + ((canvasSize `div` width) `div` 2))
+      ((j * (canvasSize `div` size)) + ((canvasSize `div` size) `div` 2))
     , fromIntegral
-      ((i * (canvasSize `div` height)) + ((canvasSize `div` height) - 10))
+      ((i * (canvasSize `div` size)) + ((canvasSize `div` size) - 10))
     )
