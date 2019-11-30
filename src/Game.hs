@@ -131,7 +131,7 @@ markSquare (Game board status) (i, j) = case (board V.! i) V.! j of
       (Square squareType neighbours True (i, j) CLOSED)
   (Square squareType neighbours False (i, j) OPEN) -> (Game board status)
 
--- |Gives an updates game status based on a board
+-- |Gives an updated game status based on a board
 updatedGameStatus :: Board -> GameStatus
 updatedGameStatus board = foldl (foldRows) WIN board
  where
